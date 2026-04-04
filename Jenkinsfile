@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     parameters {
-        booleanParam(name: 'autoApprove', defaultValue: false, description: 'Automatically run apply after generating plan?')
-        choice(name: 'action', choices: ['apply', 'destroy'], description: 'Select the action to perform')
+        booleanParam(name: 'autoApprove', defaultValue: false, description: 'Auto approve apply/destroy?')
+        choice(name: 'action', choices: ['apply', 'destroy'], description: 'Select action')
     }
 
     environment {
@@ -13,41 +13,60 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 git branch: 'main', url: 'https://github.com/Shafi23/terraform-jenkins-pipeline.git'
             }
         }
-        stage('Terraform init') {
+
+        stage('Terraform Init') {
             steps {
                 sh 'terraform init'
             }
         }
+
         stage('Plan') {
-            steps {
-                sh "terraform ${params.action} -input=false tfplan"
-                sh 'terraform show -no-color tfplan > tfplan.txt'
-            }
-        }
-        stage('Apply / Destroy') {
             steps {
                 script {
                     if (params.action == 'apply') {
-                        if (!params.autoApprove) {
-                            def plan = readFile 'tfplan.txt'
-                            input message: "Do you want to apply the plan?",
-                            parameters: [text(name: 'Plan', description: 'Please review the plan', defaultValue: plan)]
-                        }
-
-                        sh 'terraform ${action} -input=false tfplan'
-                    } else if (params.action == 'destroy') {
-                        sh 'terraform ${action} --auto-approve'
+                        sh 'terraform plan -out=tfplan'
+                        sh 'terraform show -no-color tfplan > tfplan.txt'
                     } else {
-                        error "Invalid action selected. Please choose either 'apply' or 'destroy'."
+                        sh 'terraform plan -destroy -out=destroy.tfplan'
+                        sh 'terraform show -no-color destroy.tfplan > destroy.txt'
                     }
                 }
             }
         }
 
+        stage('Apply / Destroy') {
+            steps {
+                script {
+
+                    if (params.action == 'apply') {
+
+                        if (!params.autoApprove) {
+                            def plan = readFile 'tfplan.txt'
+                            input message: "Approve Terraform Apply?",
+                                  parameters: [text(name: 'Plan', defaultValue: plan)]
+                        }
+
+                        // Avoid stale plan issue (best practice)
+                        sh 'terraform apply -auto-approve'
+
+                    } else if (params.action == 'destroy') {
+
+                        if (!params.autoApprove) {
+                            def plan = readFile 'destroy.txt'
+                            input message: "Approve Terraform Destroy?",
+                                  parameters: [text(name: 'Destroy Plan', defaultValue: plan)]
+                        }
+
+                        sh 'terraform destroy -auto-approve'
+                    }
+                }
+            }
+        }
     }
 }
